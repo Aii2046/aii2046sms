@@ -50,8 +50,37 @@ def process_received_message_task(event_data: dict):
     # Logic: Parse event -> Save to DB -> Maybe reply?
     async def _process():
         async with AsyncSessionLocal() as db:
-            # TODO: Implement receive logic
-            pass
+            try:
+                # Feishu event structure: {"header": {...}, "event": {...}}
+                # Debug log to see raw event
+                logger.info(f"Raw Feishu Event: {event_data}")
+
+                event = event_data.get("event", {})
+                message = event.get("message", {})
+                
+                # Check if it is a text message (Note: Feishu v2 uses "message_type", v1 used "msg_type")
+                msg_type = message.get("message_type") or message.get("msg_type")
+                
+                if msg_type == "text":
+                    # Content is a JSON string, e.g. "{\"text\":\"hello\"}"
+                    content_str = message.get("content", "{}")
+                    import json
+                    try:
+                        content_dict = json.loads(content_str)
+                        text = content_dict.get("text", "")
+                    except json.JSONDecodeError:
+                        text = content_str
+                    
+                    chat_id = message.get("chat_id")
+                    sender = event.get("sender", {})
+                    sender_id = sender.get("sender_id", {}).get("open_id")
+                    
+                    logger.info(f"Received Feishu message: ChatID={chat_id}, Sender={sender_id}, Content={text}")
+                    
+                    # TODO: Add your business logic here (e.g., save to DB, auto-reply)
+                    
+            except Exception as e:
+                logger.error(f"Failed to process Feishu message: {e}")
     
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)

@@ -18,6 +18,11 @@ async def feishu_webhook(request: Request, background_tasks: BackgroundTasks):
     
     # 3. Async Process
     # We can use Celery for reliability
-    process_received_message_task.delay(data)
+    logger.info(f"Dispatching task for event: {data.get('header', {}).get('event_id')}")
+    try:
+        task = process_received_message_task.delay(data)
+        logger.info(f"Task dispatched successfully: {task.id}")
+    except Exception as e:
+        logger.error(f"Failed to dispatch task: {e}")
     
     return {"msg": "ok"}
