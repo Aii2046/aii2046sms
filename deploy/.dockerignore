@@ -1,0 +1,46 @@
+# Git & Config
+.git/
+.gitignore
+.env
+.vscode/
+.trae/
+
+# Python & Dependencies
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+venv/
+.venv/
+pip-wheel-metadata/
+
+# Database Migrations (Local only)
+alembic/
+alembic.ini
+
+# Docker
+docker-compose.yml
+docker-compose.override.yml
+docker-compose.local.yml
+Dockerfile
+docker/
+
+# Tests & Scripts
+test_*.py
+run_all_tests.py
+upload_media.py
+get_open_id.py
+get_chat_id.py
+generate_valid_image.py
+
+# Generated Files & Logs
+*.log
+*.png
+*.jpg
+*.bmp
+*.gif
+*.txt
+*.md
+
+# Exceptions
+!requirements.txt

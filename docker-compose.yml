@@ -1,0 +1,28 @@
+services:
+  web:
+    build: .
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - TZ=Asia/Shanghai
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: always
+
+  worker:
+    build: .
+    command: celery -A app.worker.celery_app worker --beat --loglevel=info -Q celery,send_queue,receive_queue
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    environment:
+      - TZ=Asia/Shanghai
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: always
