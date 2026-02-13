@@ -9,10 +9,14 @@ logger = logging.getLogger(__name__)
 async def feishu_webhook(request: Request, background_tasks: BackgroundTasks):
     data = await request.json()
     
+    # Log raw data immediately to debug structure and flow
+    logger.info(f"Received webhook data: {data}")
+
     # 1. URL Verification (Feishu requires this)
     if data.get("type") == "url_verification":
+        logger.info("Handling URL verification challenge")
         return {"challenge": data.get("challenge")}
-    
+
     # 2. Event Handling
     # Ideally verify signature here using settings.FEISHU_ENCRYPT_KEY
     
@@ -20,7 +24,7 @@ async def feishu_webhook(request: Request, background_tasks: BackgroundTasks):
     # We can use Celery for reliability
     logger.info(f"Dispatching task for event: {data.get('header', {}).get('event_id')}")
     try:
-        task = process_received_message_task.delay(data)
+        task = process_received_message_task.apply_async(args=[data], queue="receive_queue")
         logger.info(f"Task dispatched successfully: {task.id}")
     except Exception as e:
         logger.error(f"Failed to dispatch task: {e}")

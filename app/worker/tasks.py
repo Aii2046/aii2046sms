@@ -13,6 +13,9 @@ logger = logging.getLogger(__name__)
 
 @celery_app.task(name="app.worker.tasks.send_message_task")
 def send_message_task(message_id: int, recipient_id: str, recipient_type: str, msg_type: str, content: dict):
+    # Debug log to trace task arguments
+    logger.info(f"Processing send_message_task: id={message_id}, type={recipient_type}, msg_type={msg_type}")
+    
     async def _process():
         async with AsyncSessionLocal() as db:
             try:
@@ -22,6 +25,19 @@ def send_message_task(message_id: int, recipient_id: str, recipient_type: str, m
                 if recipient_type in ['email', 'feishu_chat', 'feishu_user']:
                     # Call Feishu API
                     response = await FeishuService.send_message(recipient_id, recipient_type, msg_type, content)
+                    
+                    if response.get("code") == 0:
+                        feishu_msg_id = response.get("data", {}).get("message_id")
+                        await MessageService.update_message(db, message_id, MessageUpdate(status="sent", feishu_message_id=feishu_msg_id))
+                    else:
+                        error_msg = f"Feishu Error: {response}"
+                        await MessageService.update_message(db, message_id, MessageUpdate(status="failed", error_log=error_msg))
+                elif recipient_type == 'sms_dispatcher':
+                    # Reply with "sms消息已收到并分发"
+                    reply_content = {"text": "sms消息已收到并分发"}
+                    # The recipient_id for sms_dispatcher is the original chat_id
+                    # We send a message back to this chat
+                    response = await FeishuService.send_message(recipient_id, "feishu_chat", "text", reply_content)
                     
                     if response.get("code") == 0:
                         feishu_msg_id = response.get("data", {}).get("message_id")
@@ -62,22 +78,7 @@ def process_received_message_task(event_data: dict):
                 msg_type = message.get("message_type") or message.get("msg_type")
                 
                 if msg_type == "text":
-                    # Content is a JSON string, e.g. "{\"text\":\"hello\"}"
-                    content_str = message.get("content", "{}")
-                    import json
-                    try:
-                        content_dict = json.loads(content_str)
-                        text = content_dict.get("text", "")
-                    except json.JSONDecodeError:
-                        text = content_str
-                    
-                    chat_id = message.get("chat_id")
-                    sender = event.get("sender", {})
-                    sender_id = sender.get("sender_id", {}).get("open_id")
-                    
-                    logger.info(f"Received Feishu message: ChatID={chat_id}, Sender={sender_id}, Content={text}")
-                    
-                    # TODO: Add your business logic here (e.g., save to DB, auto-reply)
+                    await _handle_text_message(db, event, message)
                     
             except Exception as e:
                 logger.error(f"Failed to process Feishu message: {e}")
@@ -86,6 +87,69 @@ def process_received_message_task(event_data: dict):
     asyncio.set_event_loop(loop)
     loop.run_until_complete(_process())
     loop.close()
+
+async def _handle_text_message(db, event, message):
+    # Content is a JSON string, e.g. "{\"text\":\"hello\"}"
+    content_str = message.get("content", "{}")
+    import json
+    try:
+        content_dict = json.loads(content_str)
+        text = content_dict.get("text", "")
+    except json.JSONDecodeError:
+        text = content_str
+    
+    chat_id = message.get("chat_id")
+    sender = event.get("sender", {})
+    sender_id = sender.get("sender_id", {}).get("open_id")
+    
+    logger.info(f"Received Feishu message: ChatID={chat_id}, Sender={sender_id}, Content={text}")
+    
+    # Process mentions in content
+    # Feishu mentions are in format: "@_user_1" and corresponding key in "mentions" array
+    mentions = message.get("mentions", [])
+    processed_text = text
+    for mention in mentions:
+        key = mention.get("key")
+        name = mention.get("name")
+        if key == "@_user_1": # Assuming this is the bot itself based on user input
+            processed_text = processed_text.replace(key, "@sms信使")
+        elif key and name:
+            processed_text = processed_text.replace(key, f"@{name}")
+
+    # Construct message content for storage/sending
+    # Note: MessageCreate expects 'content' as dict/json for consistency with other parts,
+    # but for simple text, we might need to wrap it.
+    # Looking at send_message endpoint, it takes MessageCreate.
+    # We will replicate the logic of send_message endpoint here but within the task.
+    
+    from app.schemas.message import MessageCreate
+    
+    message_in = MessageCreate(
+        content={"text": processed_text},
+        recipient_id=chat_id,
+        recipient_type="sms_dispatcher",
+        msg_type="text",
+        status="pending",
+        sender=f"FeishuChat_{sender_id}",
+        user_id=None
+    )
+    
+    # 1. Create DB record (Pending)
+    # We are already in an async session context (db)
+    db_message = await MessageService.create_message(db, message_in)
+    
+    # 2. Trigger Async Task to "send" (or process) this message
+    # Since we are already in a task, calling delay() adds another task to the queue.
+    # This is correct for decoupling receiving from processing/dispatching.
+    send_message_task.delay(
+        db_message.id, 
+        db_message.recipient_id, 
+        db_message.recipient_type, 
+        db_message.msg_type, 
+        db_message.content
+    )
+    
+    logger.info(f"Processed and dispatched message {db_message.id} from Feishu event")
 
 @celery_app.task(name="app.worker.tasks.check_heartbeat_task")
 def check_heartbeat_task():
